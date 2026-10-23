@@ -1,0 +1,12 @@
+out/
+__pycache__/
+*.pyc
+*.pfx
+*.p12
+*.key
+*.ppk
+*.sqlite3
+*.env
+session-leases/
+*mail.json
+turnstile.json
