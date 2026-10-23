@@ -1,0 +1,67 @@
+name: Build and optional approved signing
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      request_signing:
+        description: Request signing only after SignPath acceptance and human approval
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build source and isolated tests
+        shell: powershell
+        run: .\build.ps1
+      - name: Test reference handoff authorization
+        run: python tests/test_handoff.py
+      - name: Upload unsigned launcher only
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unsigned-launcher
+          path: out/TechieismSupportLauncher.exe
+          if-no-files-found: error
+  sign:
+    if: github.event_name == 'workflow_dispatch' && inputs.request_signing && github.ref == 'refs/heads/main' && vars.SIGNPATH_ENABLED == 'true'
+    needs: build
+    runs-on: windows-2022
+    environment: signing
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      # Official v3 commit pinned; review vendor code before enabling signing.
+      - name: Submit reviewed build to SignPath
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: techieism-support-launcher
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ needs.build.outputs.artifact_id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+          parameters: |
+            version: "0.1.0.0"
+      - name: Verify signed artifact
+        shell: powershell
+        run: |
+          $signature = Get-AuthenticodeSignature -LiteralPath signed\TechieismSupportLauncher.exe
+          if ($signature.Status -ne 'Valid' -or !$signature.TimeStamperCertificate) { throw 'Valid timestamped signature required.' }
+          if (!$env:EXPECTED_SIGNER -or $signature.SignerCertificate.Thumbprint -ne $env:EXPECTED_SIGNER) { throw 'Unexpected signing certificate.' }
+        env:
+          EXPECTED_SIGNER: ${{ vars.SIGNPATH_CERTIFICATE_THUMBPRINT }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: signed-launcher
+          path: signed/TechieismSupportLauncher.exe
+          if-no-files-found: error
